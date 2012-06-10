@@ -1,0 +1,40 @@
+#! /bin/sh
+### BEGIN INIT INFO
+# Provides:          kvmctl
+# Required-Start:    qemu-kvm
+# Required-Stop:
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: KVM Control init script
+# Description:       This script starts and stops KVM instances
+### END INIT INFO
+
+. /lib/lsb/init-functions
+
+KVMCTL=/usr/local/bin/kvmctl
+
+case "$1" in
+  start)
+	if $KVMCTL startall; then
+		log_success_msg "Succesfully started all KVM instances"
+	else
+		log_failure_msg "Failed"
+	fi
+	;;
+  stop)
+	if $KVMCTL stopall; then
+		log_success_msg "Succesfully stopped all KVM instances"
+	else
+		log_failure_msg "Failed"
+	fi
+	;;
+  force-reload|restart)
+	echo "Not implemented"
+	;;
+  *)
+	echo "Usage: $0 {start|stop}" >&2
+	exit 3
+	;;
+esac
+
+:

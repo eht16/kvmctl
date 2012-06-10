@@ -1,0 +1,796 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+#  Copyright 2012 Enrico Tröger <enrico(dot)troeger(at)uvena(dot)de>
+#
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; either version 2 of the License.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+#  MA 02110-1301, USA.
+
+
+from ConfigParser import NoOptionError, SafeConfigParser
+from glob import glob
+from math import floor
+from optparse import OptionGroup, OptionParser
+from pwd import getpwnam
+from signal import SIGTERM, SIGKILL
+from subprocess import Popen, PIPE
+from time import gmtime, sleep, strftime, time
+import functools
+import logging
+import os
+import sys
+import re
+import telnetlib
+
+
+KVMCTL_VERSION = '1.0'
+OPENVZ_UPTIME_RE = re.compile(r'([0-9]+)d([0-9]+)h:([0-9]+)m:([0-9]+)s')
+# used to calculate uptime of KVM instance
+HERTZ = os.sysconf(os.sysconf_names['SC_CLK_TCK'])
+
+
+#----------------------------------------------------------------------
+def log(fn):
+    """
+    Echo calls to a function.
+
+    Returns a decorated version of the input function which "echoes" calls
+    made to it by writing out the function's name and the arguments it was
+    called with.
+
+    (from http://wordaligned.org/articles/echo)
+    """
+    def format_arg_value(arg_val):
+        """ Return a string representing a (name, value) pair."""
+        arg, val = arg_val
+        return "%s=%r" % (arg, val)
+
+    # Unpack function's arg count, arg names, arg defaults
+    code = fn.func_code
+    argcount = code.co_argcount
+    argnames = code.co_varnames[:argcount]
+    fn_defaults = fn.func_defaults or list()
+    argdefs = dict(zip(argnames[-len(fn_defaults):], fn_defaults))
+
+    @functools.wraps(fn)
+    def wrapped(*v, **k):
+        # Collect function arguments by chaining together positional,
+        # defaulted, extra positional and keyword arguments.
+        zipped_args = zip(argnames, v)
+        # filter out 'self'
+        zipped_args = filter(lambda x: x[0] != 'self', zipped_args)
+        positional = map(format_arg_value, zipped_args)
+        defaulted = [format_arg_value((a, argdefs[a]))
+                     for a in argnames[len(v):] if a not in k]
+        nameless = map(repr, v[argcount:])
+        keyword = map(format_arg_value, k.items())
+        args = positional + defaulted + nameless + keyword
+        logger = logging.getLogger('kvmctl')
+        logger.debug("%s(%s)" % (fn.__name__, ", ".join(args)))
+        return fn(*v, **k)
+    return wrapped
+
+
+########################################################################
+class Container(object):
+    """"""
+
+    #----------------------------------------------------------------------
+    def __init__(self, logger):
+        self.vmid = None  # actually it's the CTID
+        self.name = None
+        self.cpucores = None
+        self.disksize = None
+        self.disksize_used = None
+        self.memory = None
+        self.memory_used = None
+        self.status = None
+        self.uptime = None
+        self._logger = logger
+
+    #----------------------------------------------------------------------
+    def get_status(self):
+        return self.status
+
+    #----------------------------------------------------------------------
+    def get_uptime(self):
+        match = OPENVZ_UPTIME_RE.match(self.uptime)
+        if match:
+            days, hours, minutes, seconds = match.groups()
+            return u'%s days, %s:%s:%s' % (int(days), hours, minutes, seconds)
+        else:
+            return None
+
+    #----------------------------------------------------------------------
+    def get_used_memory(self):
+        # physpages * 4 = KB / 1024 / 1024 = GB
+        try:
+            return _format_bytes((float(self.memory_used) * 4) / 1024)
+        except ValueError:
+            return None
+
+    #----------------------------------------------------------------------
+    def get_max_memory(self):
+        if self.memory != '9223372036854775807':
+            return _format_bytes((float(self.memory) * 4) / 1024)
+        else:
+            return u'-'
+
+    #----------------------------------------------------------------------
+    def get_max_disksize(self):
+        return _format_bytes(float(self.disksize) / 1024 / 1024)
+
+    #----------------------------------------------------------------------
+    def get_used_disksize(self):
+        try:
+            return _format_bytes(float(self.disksize_used) / 1024 / 1024)
+        except ValueError:
+            return None
+
+    #----------------------------------------------------------------------
+    def get_pid(self):
+        return None
+
+
+########################################################################
+class VirtualMachine(object):
+    """"""
+
+    pidfile_path = None
+    logfile_path = None
+    images_path = None
+    monitor_telnet_base_port = None
+
+    #----------------------------------------------------------------------
+    def __init__(self, logger):
+        self.vmid = None
+        self.name = None
+        self.memory = None
+        self.disksize = None
+        self.iso = None
+        self.cpucores = None
+        self.mac_internal = None
+        self.mac_external = None
+        self.language = None
+        self.auto_start = None
+        self._pid = None
+        self._pidfile = None
+        self._logfile = None
+        self._logger = logger
+
+    #----------------------------------------------------------------------
+    def get_pid(self):
+        if not self._pid:
+            pidfile = self.get_pidfile()
+            try:
+                self._pid = int(open(pidfile, 'r').read().strip())
+            except (IOError, ValueError):
+                return None
+        return self._pid
+
+    #----------------------------------------------------------------------
+    def get_pidfile(self):
+        if not self._pidfile:
+            self._pidfile = os.path.join(self.pidfile_path, u'%s.pid' % self.name)
+        return self._pidfile
+
+    #----------------------------------------------------------------------
+    def get_logfile(self):
+        if not self._logfile:
+            self._logfile = os.path.join(self.logfile_path, u'%s.log' % self.name)
+        return self._logfile
+
+    #----------------------------------------------------------------------
+    def get_status(self):
+        if self._check_pidfile():
+            return u'running'
+        return u'stopped'
+
+    #----------------------------------------------------------------------
+    def _check_pidfile(self):
+        pidfile = self.get_pidfile()
+        try:
+            pid = self.get_pid()
+            if not pid:
+                return False
+            # check the command line of the process to ensure there is not already another
+            # process using the same pid
+            cmdline = open('/proc/%s/cmdline' % pid, 'r').read().split('\0')
+        except (IOError, OSError), e:
+            self._logger.warn(u'Failed reading process command line: %s', e)
+            return False
+
+        # the cmdline of the process should contain the same pidfile path as we have just checked
+        if not 'kvm' in cmdline or not pidfile in cmdline:
+            return False
+
+        return True
+
+    #----------------------------------------------------------------------
+    def get_image_filename(self):
+        return os.path.join(self.images_path, u'%s.img' % self.name)
+
+    #----------------------------------------------------------------------
+    def get_uptime(self):
+        """Simple method to get the uptime of the process
+          (found on http://stackoverflow.com/questions/2598145/how-to-retrieve-the-process-start-time-or-uptime-in-python)"""
+        pid = self.get_pid()
+        try:
+            system_stats = open('/proc/stat').readlines()
+            process_stats = open('/proc/%s/stat' % pid).read().split()
+            for line in system_stats:
+                if line.startswith('btime'):
+                    boot_timestamp = int(line.split()[1])
+            age_from_boot_jiffies = int(process_stats[21])
+            age_from_boot_timestamp = age_from_boot_jiffies / HERTZ
+            age_timestamp = boot_timestamp + age_from_boot_timestamp
+            uptime = time() - age_timestamp
+            uptime_days = int(floor(uptime / 86400))
+            t_val = gmtime(uptime - (uptime_days * 86400))
+            return u'%s days, %s' % (uptime_days, strftime(u'%H:%M:%S', t_val))
+        except (IOError, OSError):
+            return u'unknown'
+
+    #----------------------------------------------------------------------
+    def get_used_memory(self):
+        try:
+            pid = self.get_pid()
+            status = open('/proc/%s/status' % pid).read()
+            for line in status.splitlines():
+                line = line.strip()
+                if line.startswith('VmRSS:'):
+                    memory_kb = line.split()[1]
+                    memory_mb = float(memory_kb) / 1024.0
+                    return _format_bytes(memory_mb)
+        except (IOError, OSError, ValueError), e:
+            self._logger.warn(u'Failed reading process memory: %s', e)
+            return None
+
+    #----------------------------------------------------------------------
+    def get_max_memory(self):
+        return _format_bytes(self.memory)
+
+    #----------------------------------------------------------------------
+    def get_used_disksize(self):
+        file_stat = os.stat(self.get_image_filename())
+        # this is not portable
+        file_size_bytes = file_stat.st_blocks * 512.0
+        file_size_giga_bytes = file_size_bytes / 1024 / 1024 / 1024
+        return _format_bytes(file_size_giga_bytes)
+
+    #----------------------------------------------------------------------
+    def get_max_disksize(self):
+        return _format_bytes(self.disksize)
+
+    #----------------------------------------------------------------------
+    def get_internal_tap_device(self):
+        return u'itap%s' % self.vmid
+
+    #----------------------------------------------------------------------
+    def get_external_tap_device(self):
+        return u'etap%s' % self.vmid
+
+    #----------------------------------------------------------------------
+    def get_monitor_telnet_port(self):
+        return self.monitor_telnet_base_port + int(self.vmid)
+
+
+########################################################################
+class KvmCtl(object):
+    """"""
+
+    config_path = None
+    vzlist_command = None
+    stop_wait_timeout = None
+    runas_user = None
+    ifup_script_external = None
+    ifup_script_internal = None
+
+    #----------------------------------------------------------------------
+    def __init__(self, logger):
+        self._logger = logger
+
+    #----------------------------------------------------------------------
+    @log
+    def list(self):
+        """List configured VMs and container"""
+        header = u' +------+------------------+------------+--------+---------------+---------------------+----------------------+\n'
+        output = header
+        output += u' | VMID | NAME             | STATUS     | PID    | DISKSIZE (GB) | RAM (MB)            | Uptime               |\n'
+        output += header
+        vms = list()
+        for vm_config_file_name in _iterate_vms(self.config_path):
+            vm_instance = self._factor_vm_from_config(vm_config_file_name)
+            vms.append(vm_instance)
+
+        self._merge_openvz_container(vms)
+
+        for vm_instance in sorted(vms, key=lambda x: int(x.vmid)):
+            disksize_max = vm_instance.get_max_disksize()
+            disksize_used = vm_instance.get_used_disksize() or u'-'
+            disksize = u'%+5s / %+5s' % (disksize_used, disksize_max)
+            memory_max = vm_instance.get_max_memory()
+            memory_used = vm_instance.get_used_memory() or u'-'
+            memory = u'%+8s / %+8s' % (memory_used, memory_max)
+            pid = vm_instance.get_pid() or u'-'
+            uptime = vm_instance.get_uptime() or u'-'
+
+            values = dict(
+                sep=' | ',
+                vmid=vm_instance.vmid,
+                name=vm_instance.name,
+                status=vm_instance.get_status(),
+                pid=pid,
+                uptime=uptime,
+                disksize=disksize,
+                memory=memory)
+            output += u'%(sep)s%(vmid)-4s%(sep)s%(name)-16s%(sep)s%(status)-10s%(sep)s%(pid)-6s' \
+                      u'%(sep)s%(disksize)-13s%(sep)s%(memory)-19s%(sep)s%(uptime)-20s%(sep)s\n' % \
+                      values
+
+        output += header
+        print output,
+
+    #----------------------------------------------------------------------
+    def _factor_vm_from_config(self, config_file_name):
+        vm_config = SafeConfigParser()
+        if not vm_config.read(config_file_name):
+            raise Exception(u'Vm config file "%s" not found' % config_file_name)
+        vm_instance = VirtualMachine(self._logger)
+        # strip of .conf from the filename
+        vm_instance.name = os.path.basename(config_file_name)[:-5]
+        vm_instance.vmid = _get_value_from_config_file(vm_config.getint, u'instance', u'vmid')
+        vm_instance.memory = _get_value_from_config_file(vm_config.get, u'instance', u'memory')
+        vm_instance.cpucores = _get_value_from_config_file(vm_config.get, u'instance', u'cpucores')
+        vm_instance.disksize = _get_value_from_config_file(vm_config.get, u'instance', u'disksize')
+        vm_instance.iso = _get_value_from_config_file(vm_config.get, u'instance', u'iso')
+        vm_instance.mac_internal = _get_value_from_config_file(vm_config.get, u'instance', u'mac_internal')
+        vm_instance.mac_external = _get_value_from_config_file(vm_config.get, u'instance', u'mac_external')
+        vm_instance.language = _get_value_from_config_file(vm_config.get, u'instance', u'language')
+        vm_instance.auto_start = _get_value_from_config_file(vm_config.getboolean, u'instance', u'auto_start')
+
+        return vm_instance
+
+    #----------------------------------------------------------------------
+    def _get_vm_from_name(self, vm_name):
+        vm_config_file_name = os.path.join(self.config_path, u'%s.conf' % vm_name)
+        return self._factor_vm_from_config(vm_config_file_name)
+
+    #----------------------------------------------------------------------
+    def _merge_openvz_container(self, vms):
+        if not self.vzlist_command or not os.path.exists(self.vzlist_command):
+            return
+        cmd = (self.vzlist_command,
+               u'-a',
+               u'-H',
+               u'-o',
+               u'ctid,name,status,uptime,diskspace,diskspace.s,physpages,physpages.l')
+        returncode, stdout, stderr = _run_command(cmd)
+        if not returncode == 0:
+            self._logger.warn(u'Error on executing vzlist: %s' % stderr)
+            return
+        for line in stdout.splitlines():
+            line = line.strip()
+            ctid, name, status, uptime, ds_used, ds_max, memory_used, memory_max = line.split()
+            container = Container(self._logger)
+            container.vmid = ctid
+            container.name = name
+            container.status = status
+            container.uptime = uptime
+            container.disksize_used = ds_used
+            container.disksize = ds_max
+            container.memory_used = memory_used
+            container.memory = memory_max
+            vms.append(container)
+
+    #----------------------------------------------------------------------
+    @log
+    def stop(self, vm_name, nowait=False):
+        """Stop a VM"""
+        vm = self._get_vm_from_name(vm_name)
+        if vm.get_status() == 'running':
+            print 'Send powerdown signal to VM "%s"' % vm_name,
+            self._send_powerdown(vm)
+            if not nowait:
+                print ', waiting for shutdown'
+                self._wait_for_vm_to_shutdown(vm)
+            else:
+                print
+        self._delete_pidfile(vm)
+        print 'VM "%s" stopped or was already stopped' % vm_name
+
+    #----------------------------------------------------------------------
+    def _send_powerdown(self, vm):
+        self._send_command_to_monitor(vm, 'system_powerdown')
+
+    #----------------------------------------------------------------------
+    def _send_command_to_monitor(self, vm, command):
+        port = vm.get_monitor_telnet_port()
+        client = telnetlib.Telnet('localhost', port, timeout=3)
+        client.read_until('(qemu) ', timeout=0.5)
+        client.write(command)
+        client.write('\n')
+        client.close()
+
+    #----------------------------------------------------------------------
+    def _wait_for_vm_to_shutdown(self, vm):
+        start_time = time()
+        while vm.get_status() != 'stopped':
+            sleep(1)
+            print '.',
+            sys.stdout.flush()
+            if time() > (start_time + self.stop_wait_timeout):
+                self._logger.warn(u'Stopping VM "%s" took more than %s seconds, aborted' % \
+                    (vm.name, self.stop_wait_timeout))
+                break
+        print '\r'
+
+    #----------------------------------------------------------------------
+    def _delete_pidfile(self, vm):
+        pidfile = vm.get_pidfile()
+        try:
+            os.unlink(pidfile)
+        except OSError:
+            pass
+
+    #----------------------------------------------------------------------
+    @log
+    def start(self, vm_name, vnc=False):
+        """Start a VM"""
+        vm = self._get_vm_from_name(vm_name)
+        if vm.get_status() == 'running':
+            raise Exception(u'VM "%s" is already running' % vm_name)
+
+        self._create_image_file_if_necessary(vm)
+        print 'Starting VM "%s"' % vm_name
+        self._start(vm, vnc)
+
+    #----------------------------------------------------------------------
+    def _create_image_file_if_necessary(self, vm):
+        image_filename = vm.get_image_filename()
+        if os.path.exists(image_filename):
+            return
+        print 'Create VM disk image for VM "%s" of size %s' % (vm.name, vm.disksize)
+        cmd = (u'qemu-img', u'create', u'-f', u'raw', image_filename, vm.disksize)
+        returncode, stdout, stderr = _run_command(cmd)
+        if returncode != 0:
+            raise Exception(u'Disk image creation failed:\n%s' % stderr)
+        else:
+            os.chown(image_filename, getpwnam(self.runas_user).pw_uid, -1)
+            print stdout,
+
+    #----------------------------------------------------------------------
+    def _start(self, vm, vnc=False):
+        cmd = [u'kvm',
+               u'-name', u'%(name)s,process=%(name)s' % dict(name=vm.name),
+               u'-localtime',
+               u'-m', vm.memory,
+               u'-smp', vm.cpucores,
+               u'-cpu', u'host',
+               u'-boot', u'order=cd',
+               u'-balloon', u'virtio',
+               u'-drive', u'file=%s,if=virtio,aio=threads,cache=writeback,boot=on' % vm.get_image_filename(),
+               u'-monitor', u'telnet:127.0.0.1:%s,server,nowait' % vm.get_monitor_telnet_port(),
+               #u'-serial', u'unix:%s,server,nowait' % vm.get_serial_console_file(),
+               u'-writeconfig', u'/etc/kvm/%s.conf' % vm.name,
+               u'-pidfile', vm.get_pidfile(),
+               u'-runas', self.runas_user,
+               u'-D', vm.get_logfile(),
+               u'-daemonize']
+        if vm.iso:
+            cmd_iso = (u'-cdrom', vm.iso)
+            cmd.extend(cmd_iso)
+        if vnc:
+            cmd_vnc = (u'-usbdevice', u'tablet', u'-vnc', u':%s' % vm.vmid, u'-k', vm.language)
+            cmd.extend(cmd_vnc)
+        else:
+            cmd_novnc = (u'-vga', u'none', u'-nographic')
+            cmd.extend(cmd_novnc)
+        # network
+        if vm.mac_external:
+            cmd_net_external = (
+               u'-net', u'nic,model=virtio,macaddr=%s' % vm.mac_external,
+               u'-net', u'tap,ifname=%s,script=%s' % (vm.get_external_tap_device(), self.ifup_script_external))
+            cmd.extend(cmd_net_external)
+        cmd_net_internal = (
+           u'-net', u'nic,model=virtio,macaddr=%s' % vm.mac_internal,
+           u'-net', u'tap,ifname=%s,script=%s' % (vm.get_internal_tap_device(), self.ifup_script_internal))
+        cmd.extend(cmd_net_internal)
+
+        returncode, stdout, stderr = _run_command(cmd)
+        if returncode != 0:
+            raise Exception(u'VM start failed:\n%s' % stderr)
+        else:
+            print stdout,
+
+    #----------------------------------------------------------------------
+    @log
+    def restart(self, vm_name):
+        """Restart a VM"""
+        self.stop(vm_name)
+        self.start(vm_name)
+
+    #----------------------------------------------------------------------
+    @log
+    def pid(self, vm_name):
+        """Print the PID (process ID) of a running VM"""
+        vm = self._get_vm_from_name(vm_name)
+        print vm.get_pid() or u'VM is not running'
+
+    #----------------------------------------------------------------------
+    @log
+    def kill(self, vm_name, hard=False):
+        """Kill the VM"""
+        vm = self._get_vm_from_name(vm_name)
+        pid = vm.get_pid()
+        if pid:
+            os.kill(pid, SIGKILL if hard else SIGTERM)
+        else:
+            raise Exception(u'VM seems not to be running or PID could not be read')
+        self._delete_pidfile(vm)
+
+    #----------------------------------------------------------------------
+    @log
+    def startall(self):
+        """Start all VMs (except disk-encrypted VMs)"""
+        for vm_config_file_name in _iterate_vms(self.config_path):
+            vm = self._factor_vm_from_config(vm_config_file_name)
+            if vm.auto_start:
+                self.start(vm.name)
+
+    #----------------------------------------------------------------------
+    @log
+    def stopall(self):
+        """Stop all VMs"""
+        for vm_config_file_name in _iterate_vms(self.config_path):
+            vm = self._factor_vm_from_config(vm_config_file_name)
+            self.stop(vm.name)
+
+
+#----------------------------------------------------------------------
+def _get_value_from_config_file(getter, section, key, default=None):
+    try:
+        return getter(section, key)
+    except NoOptionError:
+        return default
+
+
+#----------------------------------------------------------------------
+def _format_bytes(value):
+    """Remove KB, MB, GB and spaces from the value"""
+    value = unicode(value).strip('kmgbKMGB ')
+    return u'%.1f' % float(value)
+
+
+#----------------------------------------------------------------------
+def _run_command(cmd):
+    process = Popen(cmd, stdout=PIPE, stderr=PIPE)
+    stdout, stderr = process.communicate()
+    returncode = process.returncode
+    return returncode, stdout, stderr
+
+
+#----------------------------------------------------------------------
+def _setup_logging(log_filename):
+    logger = logging.getLogger('kvmctl')
+    logger.setLevel(logging.DEBUG)
+    file_handler = logging.FileHandler(log_filename)
+    file_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s %(name)s[%(process)d]: %(levelname)s: %(message)s')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    return logger
+
+
+#----------------------------------------------------------------------
+def _get_commands():
+    commands = list()
+    for cmd_name in dir(KvmCtl):
+        if cmd_name.startswith('_'):
+            continue
+        cmd = getattr(KvmCtl, cmd_name)
+        if callable(cmd) and cmd.__doc__ is not None:
+            commands.append((cmd_name, cmd.__doc__))
+
+    return commands
+
+
+#----------------------------------------------------------------------
+def _usage(parser):
+    parser.print_help()
+
+    print(u'\nCommands available:')
+    commands = _get_commands()
+    for command_name, help_text in sorted(commands, key=lambda x: x[0]):
+        print(u'  %s: %s' % (command_name, help_text))
+    exit(1)
+
+
+#----------------------------------------------------------------------
+def _setup_options():
+    option_parser = OptionParser(
+        usage=u'Usage: kvmctl <action> <vm-name> [args]',
+        version=KVMCTL_VERSION)
+    option_group = OptionGroup(option_parser, 'Command Options')
+    option_parser.add_option_group(option_group)
+
+    option_parser.add_option('-d', '--debug', dest='debug', action='store_true',
+        help=u'enable tracebacks (default: %default)', default=False)
+    # action arguments
+    option_group.add_option('--vnc', dest='start_vnc',
+        help=u'Enable VNC server when starting a VM (default: %default)',
+        action='store_true', default=False)
+    option_group.add_option('--nowait', dest='stop_nowait',
+        help=u'When stopping a VM, don\'t wait until it is stopped (default: %default)',
+        action='store_true', default=False)
+    option_group.add_option('--hard', dest='kill_hard',
+        help=u'When killing the VM send signal KILL instead of term (default: %default)',
+        action='store_true', default=False)
+
+    return option_parser, option_group
+
+
+#----------------------------------------------------------------------
+def _validate_arguments(option_parser, arguments):
+    if not arguments:
+        _usage(option_parser)
+
+    argument_length = len(arguments)
+    simple_commands = set(['list', 'startall', 'stopall'])
+    if simple_commands.intersection(arguments):
+        if argument_length > 1:
+            _usage(option_parser)
+    elif argument_length != 2:
+        _usage(option_parser)
+
+
+#----------------------------------------------------------------------
+def _get_action_and_vm(arguments):
+    if len(arguments) > 1:
+        return arguments[0], arguments[1]
+    else:
+        return arguments[0], None
+
+
+#----------------------------------------------------------------------
+def _adapt_options_to_kwargs(options, action):
+    args = dict()
+    for attr_name in dir(options):
+        value = getattr(options, attr_name)
+        if not callable(value) and attr_name.startswith('%s_' % action):
+            attr_name = attr_name[(len(action) + 1):]
+            args[attr_name] = value
+    return args
+
+
+#----------------------------------------------------------------------
+def _iterate_vms(config_path):
+    vm_configs = glob(u'%s/*.conf' % config_path)
+    for vm_config_file_name in vm_configs:
+        yield vm_config_file_name
+    raise StopIteration()
+
+
+#----------------------------------------------------------------------
+def _autocomplete(parser, command_option_group, vm_config_path):
+    """Command and option completion for the main option parser (and options)
+    and its subcommands (and options).
+
+    Enable by sourcing one of the completion shell scripts (bash or zsh).
+
+    (Stolen from pip - http://www.pip-installer.org/)
+    """
+    # Don't complete if user hasn't sourced bash_completion file.
+    if 'KVMCTL_AUTO_COMPLETE' not in os.environ:
+        return
+    cwords = os.environ['COMP_WORDS'].split()[1:]
+    cword = int(os.environ['COMP_CWORD'])
+    try:
+        current = cwords[cword - 1]
+    except IndexError:
+        current = ''
+    subcommands = [cmd_name for cmd_name, help_text in _get_commands()]
+    options = []
+    # subcommand
+    try:
+        subcommand_name = [w for w in cwords if w in subcommands][0]
+    except IndexError:
+        subcommand_name = None
+    # subcommand options
+    if subcommand_name:
+        if current.startswith('-') or current.startswith('--'):
+            options += [opt.get_opt_string()
+                        for opt in command_option_group.option_list
+                        if opt.dest.startswith('%s_' % subcommand_name)]
+            # filter out previously specified options from available options
+            prev_opts = [x for x in cwords[1:cword - 1]]
+            options = [x for x in options if x not in prev_opts]
+            # filter options by current input
+            options = [k for k in options if k.startswith(current)]
+            for option in options:
+                print option
+        else:
+            for vm_config_file_name in _iterate_vms(vm_config_path):
+                print os.path.basename(vm_config_file_name)[:-5]
+    else:
+        # show options of main parser only when necessary
+        if current.startswith('-') or current.startswith('--'):
+            subcommands += [opt.get_opt_string()
+                            for opt in parser.option_list]
+        print u' '.join([x for x in subcommands if x.startswith(current)])
+    sys.exit(1)
+
+
+#----------------------------------------------------------------------
+def _parse_config():
+    script_file = os.path.abspath(os.path.realpath(__file__))
+    main_config_file = os.path.join(os.path.dirname(script_file), '..', 'etc', 'kvmctl.conf')
+    local_config_file = os.path.join(os.path.dirname(script_file), '..', 'etc', 'kvmctl.local.conf')
+    config = SafeConfigParser()
+    config.read([main_config_file, local_config_file])
+    # configure classes
+    KvmCtl.config_path = config.get('kvmctl', 'config_path')
+    KvmCtl.vzlist_command = config.get('openvz', 'vzlist_command')
+    KvmCtl.stop_wait_timeout = config.get('kvmctl', 'stop_wait_timeout')
+    KvmCtl.runas_user = config.get('kvmctl', 'runas_user')
+    KvmCtl.ifup_script_external = config.get('kvmctl', 'ifup_script_external')
+    KvmCtl.ifup_script_internal = config.get('kvmctl', 'ifup_script_internal')
+
+    VirtualMachine.pidfile_path = config.get('kvmctl', 'pidfile_path')
+    VirtualMachine.logfile_path = config.get('kvmctl', 'logfile_path')
+    VirtualMachine.images_path = config.get('kvmctl', 'images_path')
+    VirtualMachine.monitor_telnet_base_port = config.get('kvmctl', 'monitor_telnet_base_port')
+
+    return config
+
+
+#----------------------------------------------------------------------
+def main():
+    config = _parse_config()
+
+    log_filename = config.get('kvmctl', 'log_filename')
+    vm_config_path = config.get('kvmctl', 'config_path')
+
+    option_parser, command_option_group = _setup_options()
+
+    _autocomplete(option_parser, command_option_group, vm_config_path)
+
+    options, arguments = option_parser.parse_args()
+    _validate_arguments(option_parser, arguments)
+    action, vm = _get_action_and_vm(arguments)
+    option_args = _adapt_options_to_kwargs(options, action)
+
+    logger = _setup_logging(log_filename)
+
+    try:
+        admin = KvmCtl(logger)
+        method = getattr(admin, action)
+        if vm:
+            method(vm_name=vm, **option_args)
+        else:
+            method(**option_args)
+    except Exception, e:
+        logger.warn('An error occurred on command line: %s' % ' '.join(sys.argv), exc_info=True)
+        if options.debug:
+            raise
+        else:
+            print >> sys.stderr, e
+            exit(1)
+    finally:
+        logging.shutdown()
+
+
+if __name__ == '__main__':
+    main()

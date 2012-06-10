@@ -1,0 +1,8 @@
+/var/log/kvmctl.log {
+    weekly
+    rotate 52
+    copytruncate
+    notifempty
+    missingok
+    compress
+}
