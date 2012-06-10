@@ -1,9 +1,8 @@
 KvmCtl
-^^^^^^
-
+=====
 
 About
-=====
+-----
 KvmCtl assists you in administrating KVM virtual machines.
 It doesn't provide a full management suite to fit all needs,
 it is just a little helper program to start, stop and check
@@ -11,19 +10,20 @@ your virtual machines on a host.
 As a little bonus, it can also list OpenVZ Containers running
 on the same host. This might be useful since KVM and OpenVZ
 play quite nicely together on the same host. However, KvmCtl
-is mainly targetted for KVM virtual machines and so doesn't
+is mainly targeted for KVM virtual machines and so doesn't
 offer any functionality for OpenVZ Containers other than
 listing. Use vzctl for containers, it can do almost everything
 already.
 
 
 Requirements
-============
-(Qemu-)KVM (obviously) and Python (>= 2.6, might work on older versions).
+------------
+  - Qemu-KVM (obviously)
+  - Python (>= 2.6, might work on older versions but untested).
 
 
 Installation
-============
+------------
 Copy the source directory at a desired location in your filesystem,
 e.g. /usr/local/kvmctl.
 Then simply create a symlink to $prefix/bin/kvmctl somewhere in your
@@ -38,7 +38,7 @@ config file in /etc/logrotate.d.
 
 
 Configuration
-=============
+-------------
 To configure KvmCtl, create a new file named kvmctl.local.conf
 in the etc/ subdirectory. Do not modify the default kvmctl.conf.
 Instead all custom configuration should go into the new
@@ -49,7 +49,7 @@ won't get overriden on updates.
 
 
 Usage
-=====
+-----
 The tool is meant to be run as root as many of the necessary
 information can be only be read as root. Running it as user has
 not been tested however it should work via sudo.
@@ -61,18 +61,18 @@ available commands, run:
 
 The general syntax is:
 
-  kvmctl <command> <arguments>
+    kvmctl <command> <arguments>
 
 The command is one of those listed by the help command.
 Arguments is in most cases the name of a virtual machine, e.g.
 
-  kvmctl start MyVM1
+    kvmctl start MyVM1
 
 A few commands like list, startall, stopall don't accept arguments.
 
 
 Shell command completion
-========================
+------------------------
 If you are using Bash or Zsh, you can source the appropriate script
 included in the contrib/ directory to get smart autocompletion of
 KvmCtl commands and arguments.
@@ -84,7 +84,7 @@ Try it and save even more typing :).
 
 
 License
-=======
+-------
 KvmCtl is distributed under the terms of the GNU General Public License
 as published by the Free Software Foundation; version 2 of the license.
 A copy of this license can be found in the file COPYING included with
@@ -92,5 +92,5 @@ the source code of this program.
 
 
 Ideas, questions, patches and bug reports
-=========================================
+-----------------------------------------
 Send them to me at enrico(dot)troeger(at)uvena(dot)de.
