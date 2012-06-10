@@ -431,8 +431,8 @@ class KvmCtl(object):
             print '.',
             sys.stdout.flush()
             if time() > (start_time + self.stop_wait_timeout):
-                self._logger.warn(u'Stopping VM "%s" took more than %s seconds, aborted' % \
-                    (vm.name, self.stop_wait_timeout))
+                self._logger.warn(u'Stopping VM "%s" took more than %s seconds, aborted' %
+                                  (vm.name, self.stop_wait_timeout))
                 break
         print '\r'
 
@@ -500,12 +500,12 @@ class KvmCtl(object):
         # network
         if vm.mac_external:
             cmd_net_external = (
-               u'-net', u'nic,model=virtio,macaddr=%s' % vm.mac_external,
-               u'-net', u'tap,ifname=%s,script=%s' % (vm.get_external_tap_device(), self.ifup_script_external))
+                u'-net', u'nic,model=virtio,macaddr=%s' % vm.mac_external,
+                u'-net', u'tap,ifname=%s,script=%s' % (vm.get_external_tap_device(), self.ifup_script_external))
             cmd.extend(cmd_net_external)
         cmd_net_internal = (
-           u'-net', u'nic,model=virtio,macaddr=%s' % vm.mac_internal,
-           u'-net', u'tap,ifname=%s,script=%s' % (vm.get_internal_tap_device(), self.ifup_script_internal))
+            u'-net', u'nic,model=virtio,macaddr=%s' % vm.mac_internal,
+            u'-net', u'tap,ifname=%s,script=%s' % (vm.get_internal_tap_device(), self.ifup_script_internal))
         cmd.extend(cmd_net_internal)
 
         returncode, stdout, stderr = _run_command(cmd)
@@ -627,17 +627,17 @@ def _setup_options():
     option_parser.add_option_group(option_group)
 
     option_parser.add_option('-d', '--debug', dest='debug', action='store_true',
-        help=u'enable tracebacks (default: %default)', default=False)
+            help=u'enable tracebacks (default: %default)', default=False)
     # action arguments
     option_group.add_option('--vnc', dest='start_vnc',
-        help=u'Enable VNC server when starting a VM (default: %default)',
-        action='store_true', default=False)
+            help=u'Enable VNC server when starting a VM (default: %default)',
+            action='store_true', default=False)
     option_group.add_option('--nowait', dest='stop_nowait',
-        help=u'When stopping a VM, don\'t wait until it is stopped (default: %default)',
-        action='store_true', default=False)
+            help=u'When stopping a VM, don\'t wait until it is stopped (default: %default)',
+            action='store_true', default=False)
     option_group.add_option('--hard', dest='kill_hard',
-        help=u'When killing the VM send signal KILL instead of term (default: %default)',
-        action='store_true', default=False)
+            help=u'When killing the VM send signal KILL instead of term (default: %default)',
+            action='store_true', default=False)
 
     return option_parser, option_group
 
