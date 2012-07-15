@@ -462,7 +462,7 @@ class KvmCtl(object):
         if os.path.exists(image_filename):
             return
         print 'Create VM disk image for VM "%s" of size %s' % (vm.name, vm.disksize)
-        cmd = (u'qemu-img', u'create', u'-f', u'raw', image_filename, vm.disksize)
+        cmd = (u'qemu-img', u'create', u'-f', u'qed', image_filename, vm.disksize)
         returncode, stdout, stderr = _run_command(cmd)
         if returncode != 0:
             raise Exception(u'Disk image creation failed:\n%s' % stderr)
