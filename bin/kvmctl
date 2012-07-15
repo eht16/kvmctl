@@ -498,15 +498,18 @@ class KvmCtl(object):
             cmd_novnc = (u'-vga', u'none', u'-nographic')
             cmd.extend(cmd_novnc)
         # network
+        if not vm.mac_external and not vm.mac_internal:
+            raise ValueError(u'At least one network interface(internal or external) must be supplied')
         if vm.mac_external:
             cmd_net_external = (
                 u'-net', u'nic,model=virtio,macaddr=%s' % vm.mac_external,
                 u'-net', u'tap,ifname=%s,script=%s' % (vm.get_external_tap_device(), self.ifup_script_external))
             cmd.extend(cmd_net_external)
-        cmd_net_internal = (
-            u'-net', u'nic,model=virtio,macaddr=%s' % vm.mac_internal,
-            u'-net', u'tap,ifname=%s,script=%s' % (vm.get_internal_tap_device(), self.ifup_script_internal))
-        cmd.extend(cmd_net_internal)
+        if vm.mac_internal:
+            cmd_net_internal = (
+                u'-net', u'nic,model=virtio,macaddr=%s' % vm.mac_internal,
+                u'-net', u'tap,ifname=%s,script=%s' % (vm.get_internal_tap_device(), self.ifup_script_internal))
+            cmd.extend(cmd_net_internal)
 
         returncode, stdout, stderr = _run_command(cmd)
         if returncode != 0:
