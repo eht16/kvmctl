@@ -19,6 +19,7 @@
 
 
 from ConfigParser import NoOptionError, SafeConfigParser
+from errno import ENOENT
 from glob import glob
 from math import floor
 from optparse import OptionGroup, OptionParser
@@ -263,7 +264,14 @@ class VirtualMachine(object):
 
     #----------------------------------------------------------------------
     def get_used_disksize(self):
-        file_stat = os.stat(self.get_image_filename())
+        try:
+            file_stat = os.stat(self.get_image_filename())
+        except OSError, e:
+            if e.errno == ENOENT:
+                # if the disk image was not yet created,
+                # simply return None to indicate it is not available
+                return None
+            raise
         # this is not portable
         file_size_bytes = file_stat.st_blocks * 512.0
         file_size_giga_bytes = file_size_bytes / 1024 / 1024 / 1024
