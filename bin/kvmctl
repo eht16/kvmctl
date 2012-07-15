@@ -751,7 +751,7 @@ def _parse_config():
     VirtualMachine.pidfile_path = config.get('kvmctl', 'pidfile_path')
     VirtualMachine.logfile_path = config.get('kvmctl', 'logfile_path')
     VirtualMachine.images_path = config.get('kvmctl', 'images_path')
-    VirtualMachine.monitor_telnet_base_port = config.get('kvmctl', 'monitor_telnet_base_port')
+    VirtualMachine.monitor_telnet_base_port = int(config.get('kvmctl', 'monitor_telnet_base_port'))
 
     return config
 
