@@ -754,7 +754,7 @@ def _parse_config():
     # configure classes
     KvmCtl.config_path = config.get('kvmctl', 'config_path')
     KvmCtl.vzlist_command = config.get('openvz', 'vzlist_command')
-    KvmCtl.stop_wait_timeout = config.get('kvmctl', 'stop_wait_timeout')
+    KvmCtl.stop_wait_timeout = config.getfloat('kvmctl', 'stop_wait_timeout')
     KvmCtl.runas_user = config.get('kvmctl', 'runas_user')
     KvmCtl.ifup_script_external = config.get('kvmctl', 'ifup_script_external')
     KvmCtl.ifup_script_internal = config.get('kvmctl', 'ifup_script_internal')
