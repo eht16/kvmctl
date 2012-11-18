@@ -313,9 +313,9 @@ class KvmCtl(object):
     @log
     def list(self):
         """List configured VMs and container"""
-        header = u' +------+------------------+------------+--------+---------------+---------------------+----------------------+\n'
+        header = u' +------+------------------+------------+---------+---------------+---------------------+----------------------+\n'
         output = header
-        output += u' | VMID | NAME             | STATUS     | PID    | DISKSIZE (GB) | RAM (MB)            | Uptime               |\n'
+        output += u' | VMID | NAME             | STATUS     | PID     | DISKSIZE (GB) | RAM (MB)            | Uptime               |\n'
         output += header
         vms = list()
         for vm_config_file_name in _iterate_vms(self.config_path):
@@ -343,7 +343,7 @@ class KvmCtl(object):
                 uptime=uptime,
                 disksize=disksize,
                 memory=memory)
-            output += u'%(sep)s%(vmid)-4s%(sep)s%(name)-16s%(sep)s%(status)-10s%(sep)s%(pid)-6s' \
+            output += u'%(sep)s%(vmid)-4s%(sep)s%(name)-16s%(sep)s%(status)-10s%(sep)s%(pid)-7s' \
                       u'%(sep)s%(disksize)-13s%(sep)s%(memory)-19s%(sep)s%(uptime)-20s%(sep)s\n' % \
                       values
 
