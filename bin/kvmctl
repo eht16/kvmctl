@@ -36,6 +36,7 @@ import telnetlib
 
 
 KVMCTL_VERSION = '1.0'
+PROC_VEINFO = '/proc/vz/veinfo'
 OPENVZ_UPTIME_RE = re.compile(r'([0-9]+)d([0-9]+)h:([0-9]+)m:([0-9]+)s')
 # used to calculate uptime of KVM instance
 HERTZ = os.sysconf(os.sysconf_names['SC_CLK_TCK'])
@@ -308,14 +309,15 @@ class KvmCtl(object):
     #----------------------------------------------------------------------
     def __init__(self, logger):
         self._logger = logger
+        self._proc_veinfo = None
 
     #----------------------------------------------------------------------
     @log
     def list(self):
         """List configured VMs and container"""
-        header = u' +------+------------------+------------+---------+---------------+---------------------+----------------------+\n'
+        header = u' +------+------------------+------------+---------+---------+---------------+---------------------+----------------------+\n'
         output = header
-        output += u' | VMID | NAME             | STATUS     | PID     | DISKSIZE (GB) | RAM (MB)            | Uptime               |\n'
+        output += u' | VMID | NAME             | STATUS     | PID     | # PROCS | DISKSIZE (GB) | RAM (MB)            | Uptime               |\n'
         output += header
         vms = list()
         for vm_config_file_name in _iterate_vms(self.config_path):
@@ -332,6 +334,7 @@ class KvmCtl(object):
             memory_used = vm_instance.get_used_memory() or u'-'
             memory = u'%+8s / %+8s' % (memory_used, memory_max)
             pid = vm_instance.get_pid() or u'-'
+            nproc = self._get_vm_process_count(vm_instance.vmid)
             uptime = vm_instance.get_uptime() or u'-'
 
             values = dict(
@@ -340,11 +343,13 @@ class KvmCtl(object):
                 name=vm_instance.name,
                 status=vm_instance.get_status(),
                 pid=pid,
+                nproc=nproc,
                 uptime=uptime,
                 disksize=disksize,
                 memory=memory)
             output += u'%(sep)s%(vmid)-4s%(sep)s%(name)-16s%(sep)s%(status)-10s%(sep)s%(pid)-7s' \
-                      u'%(sep)s%(disksize)-13s%(sep)s%(memory)-19s%(sep)s%(uptime)-20s%(sep)s\n' % \
+                      u'%(sep)s%(nproc)7s%(sep)s%(disksize)-13s%(sep)s%(memory)-19s' \
+                      u'%(sep)s%(uptime)-20s%(sep)s\n' % \
                       values
 
         output += header
@@ -369,6 +374,23 @@ class KvmCtl(object):
         vm_instance.auto_start = _get_value_from_config_file(vm_config.getboolean, u'instance', u'auto_start')
 
         return vm_instance
+
+    #----------------------------------------------------------------------
+    def _get_vm_process_count(self, vmid):
+        if not self._proc_veinfo:
+            # "lazy loading"
+            try:
+                self._proc_veinfo = dict()
+                proc_veinfo = open(PROC_VEINFO)
+                for line in proc_veinfo.readlines():
+                    parts = line.split()
+                    ctid = int(parts[0])
+                    self._proc_veinfo[ctid] = parts[2]
+            except IOError:
+                return u'-'
+
+        vmid = int(vmid)
+        return self._proc_veinfo.get(vmid, u'-')
 
     #----------------------------------------------------------------------
     def _get_vm_from_name(self, vm_name):
