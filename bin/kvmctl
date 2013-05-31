@@ -173,6 +173,12 @@ class VirtualMachine(object):
 
     #----------------------------------------------------------------------
     def get_pid(self):
+        if not self._check_pidfile():
+            return None
+        return self._get_pid()
+
+    #----------------------------------------------------------------------
+    def _get_pid(self):
         if not self._pid:
             pidfile = self.get_pidfile()
             try:
@@ -203,7 +209,7 @@ class VirtualMachine(object):
     def _check_pidfile(self):
         pidfile = self.get_pidfile()
         try:
-            pid = self.get_pid()
+            pid = self._get_pid()
             if not pid:
                 return False
             # check the command line of the process to ensure there is not already another
