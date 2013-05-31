@@ -234,6 +234,8 @@ class VirtualMachine(object):
         """Simple method to get the uptime of the process
           (found on http://stackoverflow.com/questions/2598145/how-to-retrieve-the-process-start-time-or-uptime-in-python)"""
         pid = self.get_pid()
+        if not pid:
+            return None
         try:
             system_stats = open('/proc/stat').readlines()
             process_stats = open('/proc/%s/stat' % pid).read().split()
