@@ -1,0 +1,229 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+#  Copyright 2013 Enrico Tröger <enrico(dot)troeger(at)uvena(dot)de>
+#
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; either version 2 of the License.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+#  MA 02110-1301, USA.
+
+import os
+import re
+import sys
+from optparse import OptionParser
+
+
+PSVIEW_VERSION = '1.0'
+KERNEL_PROCESSES_RE = re.compile(r'/[a-zA-Z0-9:]+$')
+
+
+########################################################################
+class Process(object):
+
+    name = None
+    pid = None
+    env_id = None
+
+    #----------------------------------------------------------------------
+    def __repr__(self):
+        return '%s<pid=%s, env_id=%s>' % (self.name, self.pid, self.env_id)
+
+
+########################################################################
+class ProcessGroup(object):
+
+    #----------------------------------------------------------------------
+    def __init__(self, name):
+        self.name = name
+        self.processes = list()
+        self._count = None
+
+    #----------------------------------------------------------------------
+    def add_process(self, process):
+        self.processes.append(process)
+        # reset count
+        self._count = None
+
+    #----------------------------------------------------------------------
+    def count(self):
+        if self._count is None:
+            self._count = len(self.processes)
+        return self._count
+
+    #----------------------------------------------------------------------
+    def __repr__(self):
+        return '%s<count=%s>' % (self.name, self.count)
+
+
+########################################################################
+class EnvironmentProcessGroup(object):
+
+    #----------------------------------------------------------------------
+    def __init__(self, env_id):
+        self.env_id = env_id
+        self.process_groups = dict()
+
+    #----------------------------------------------------------------------
+    def get_env_id(self):
+        return self.env_id
+
+    #----------------------------------------------------------------------
+    def count(self):
+        # return the sum of all processes in all groups
+        group_counts = [process_group.count() for process_group in self.process_groups.values()]
+        return sum(group_counts)
+
+    #----------------------------------------------------------------------
+    def setdefault(self, key, default=None):
+        return self.process_groups.setdefault(key, default)
+
+    #----------------------------------------------------------------------
+    def __unicode__(self):
+        if self.env_id == u'0':
+            env_name = u'Host'
+        else:
+            env_name = u'Container %s' % self.env_id
+        return u'%s (%s processes)' % (env_name, self.count())
+
+
+########################################################################
+class ProcessViewer(object):
+    """
+    Simple process viewer to print running processes on the host,
+    grouped by (OpenVZ) container and process name
+    """
+
+    #----------------------------------------------------------------------
+    def __init__(self, short_output, ctid):
+        self._short_output = short_output
+        self._ctid = ctid
+        self._processes = list()
+        self._environment_process_groups = dict()
+
+    #----------------------------------------------------------------------
+    def view(self):
+        self._read_processes()
+        self._group_processes()
+        self._render_process_overview()
+
+    #----------------------------------------------------------------------
+    def _read_processes(self):
+        for pid in os.listdir('/proc'):
+            full_pid_path = os.path.join('/proc', pid)
+            if not pid.isdigit() or not os.path.isdir(full_pid_path):
+                continue
+            # parse status information
+            name, env_id = self._parse_process_status_file(full_pid_path)
+            # ignore it if we filter by CTID
+            if self._ctid is not None and self._ctid != env_id:
+                continue
+            # add process
+            process = self._factor_process(pid, name, env_id)
+            self._processes.append(process)
+
+    #----------------------------------------------------------------------
+    def _factor_process(self, pid, name, env_id):
+        process = Process()
+        process.pid = int(pid)
+        process.name = name
+        process.env_id = env_id
+        return process
+
+    #----------------------------------------------------------------------
+    def _parse_process_status_file(self, full_pid_path):
+        name = None
+        env_id = None
+        status_path = os.path.join(full_pid_path, 'status')
+        status = open(status_path)
+        for line in status.readlines():
+            if line.startswith('Name:'):
+                name = self._get_value_from_process_status_line(line)
+                name = self._sanitize_process_name(name)
+            elif line.startswith('envID:'):
+                env_id = self._get_value_from_process_status_line(line)
+
+        env_id = env_id if env_id is not None else u'0'
+        return name, env_id
+
+    #----------------------------------------------------------------------
+    def _get_value_from_process_status_line(self, line):
+        return line.split(':')[1].strip()
+
+    #----------------------------------------------------------------------
+    def _sanitize_process_name(self, name):
+        """
+        Manipulate the process name to filter duplicates/similar ones
+        """
+        # remove /[0-9] suffix from process names, often seen in kernel processes/threads
+        name = KERNEL_PROCESSES_RE.sub('', name)
+        return name
+
+    #----------------------------------------------------------------------
+    def _group_processes(self):
+        env_groups = self._environment_process_groups
+        for process in self._processes:
+            name = process.name
+            env_id = process.env_id
+            env_group = env_groups.setdefault(env_id, EnvironmentProcessGroup(env_id))
+            process_group = env_group.setdefault(name, ProcessGroup(name))
+            process_group.add_process(process)
+
+    #----------------------------------------------------------------------
+    def _render_process_overview(self):
+        env_groups = self._environment_process_groups.values()
+        sorted_env_groups = self._sort_sequence_by_item(env_groups, 'env_id')
+        for env_group in sorted_env_groups:
+            print unicode(env_group)
+            if self._short_output:
+                continue
+            process_groups = env_group.process_groups.values()
+            sorted_process_groups = self._sort_sequence_by_item(process_groups, 'name')
+            for process_group in sorted_process_groups:
+                print ur' \_ %s: %s' % (process_group.name, process_group.count())
+
+    #----------------------------------------------------------------------
+    def _sort_sequence_by_item(self, seq, attr_name):
+        return sorted(seq, key=lambda item: getattr(item, attr_name))
+
+
+#----------------------------------------------------------------------
+def _setup_options():
+    option_parser = OptionParser(usage=u'Usage: psview [options]', version=PSVIEW_VERSION)
+    option_parser.add_option('-d', '--debug', dest='debug', action='store_true',
+            help=u'enable tracebacks (default: %default)', default=False)
+    option_parser.add_option('-E', dest='ctid',
+            help=u'limit output to the specified container', default=None)
+    option_parser.add_option('-s', dest='short_output', action='store_true',
+            help=u'short output (list only containers with their process count)', default=False)
+
+    return option_parser
+
+
+#----------------------------------------------------------------------
+def main():
+    option_parser = _setup_options()
+    options, _ = option_parser.parse_args()
+
+    try:
+        process_viewer = ProcessViewer(options.short_output, options.ctid)
+        process_viewer.view()
+    except Exception, e:
+        if options.debug:
+            raise
+        else:
+            print >> sys.stderr, e
+            exit(1)
+
+
+if __name__ == '__main__':
+    main()
