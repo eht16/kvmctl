@@ -196,6 +196,9 @@ class VirtualMachine(object):
 
     #----------------------------------------------------------------------
     def get_logfile(self):
+        if not self.logfile_path:
+            return None
+
         if not self._logfile:
             self._logfile = os.path.join(self.logfile_path, u'%s.log' % self.name)
         return self._logfile
@@ -525,8 +528,11 @@ class KvmCtl(object):
                #u'-serial', u'unix:%s,server,nowait' % vm.get_serial_console_file(),
                u'-pidfile', vm.get_pidfile(),
                u'-runas', self.runas_user,
-               u'-D', vm.get_logfile(),
                u'-daemonize']
+        vm_logfile = vm.get_logfile()
+        if vm_logfile is not None:
+            cmd_logfile = (u'-D', vm_logfile)
+            cmd.extend(cmd_logfile)
         if vm.iso:
             cmd_iso = (u'-cdrom', vm.iso)
             cmd.extend(cmd_iso)
