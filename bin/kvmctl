@@ -161,6 +161,7 @@ class VirtualMachine(object):
         self.name = None
         self.memory = None
         self.disksize = None
+        self.diskimage = None
         self.iso = None
         self.cpucores = None
         self.mac_internal = None
@@ -231,7 +232,10 @@ class VirtualMachine(object):
 
     #----------------------------------------------------------------------
     def get_image_filename(self):
-        return os.path.join(self.images_path, u'%s.img' % self.name)
+        if self.diskimage is not None:
+            return self.diskimage
+        else:
+            return os.path.join(self.images_path, u'%s.img' % self.name)
 
     #----------------------------------------------------------------------
     def get_uptime(self):
@@ -380,6 +384,7 @@ class KvmCtl(object):
         vm_instance.memory = _get_value_from_config_file(vm_config.get, u'instance', u'memory')
         vm_instance.cpucores = _get_value_from_config_file(vm_config.get, u'instance', u'cpucores')
         vm_instance.disksize = _get_value_from_config_file(vm_config.get, u'instance', u'disksize')
+        vm_instance.diskimage = _get_value_from_config_file(vm_config.get, u'instance', u'diskimage')
         vm_instance.iso = _get_value_from_config_file(vm_config.get, u'instance', u'iso')
         vm_instance.mac_internal = _get_value_from_config_file(vm_config.get, u'instance', u'mac_internal')
         vm_instance.mac_external = _get_value_from_config_file(vm_config.get, u'instance', u'mac_external')
