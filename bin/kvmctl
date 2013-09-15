@@ -43,7 +43,7 @@ HERTZ = os.sysconf(os.sysconf_names['SC_CLK_TCK'])
 
 
 #----------------------------------------------------------------------
-def log(fn):
+def log(function):
     """
     Echo calls to a function.
 
@@ -59,19 +59,19 @@ def log(fn):
         return "%s=%r" % (arg, val)
 
     # Unpack function's arg count, arg names, arg defaults
-    code = fn.func_code
+    code = function.func_code
     argcount = code.co_argcount
     argnames = code.co_varnames[:argcount]
-    fn_defaults = fn.func_defaults or list()
-    argdefs = dict(zip(argnames[-len(fn_defaults):], fn_defaults))
+    function_defaults = function.func_defaults or list()
+    argdefs = dict(zip(argnames[-len(function_defaults):], function_defaults))
 
-    @functools.wraps(fn)
+    @functools.wraps(function)
     def wrapped(*v, **k):
         # Collect function arguments by chaining together positional,
         # defaulted, extra positional and keyword arguments.
         zipped_args = zip(argnames, v)
         # filter out 'self'
-        zipped_args = filter(lambda x: x[0] != 'self', zipped_args)
+        zipped_args = [(argname, argval) for argname, argval in zipped_args if argname != 'self']
         positional = map(format_arg_value, zipped_args)
         defaulted = [format_arg_value((a, argdefs[a]))
                      for a in argnames[len(v):] if a not in k]
@@ -79,8 +79,8 @@ def log(fn):
         keyword = map(format_arg_value, k.items())
         args = positional + defaulted + nameless + keyword
         logger = logging.getLogger('kvmctl')
-        logger.debug("%s(%s)" % (fn.__name__, ", ".join(args)))
-        return fn(*v, **k)
+        logger.debug("%s(%s)", function.__name__, ", ".join(args))
+        return function(*v, **k)
     return wrapped
 
 
@@ -754,7 +754,7 @@ def _autocomplete(parser, command_option_group, vm_config_path):
         current = cwords[cword - 1]
     except IndexError:
         current = ''
-    subcommands = [cmd_name for cmd_name, help_text in _get_commands()]
+    subcommands = [cmd_name for cmd_name, _ in _get_commands()]
     options = []
     # subcommand
     try:
@@ -837,7 +837,7 @@ def main():
         else:
             method(**option_args)
     except Exception, e:
-        logger.warn('An error occurred on command line: %s' % ' '.join(sys.argv), exc_info=True)
+        logger.warn('An error occurred on command line: %s', ' '.join(sys.argv), exc_info=True)
         if options.debug:
             raise
         else:
