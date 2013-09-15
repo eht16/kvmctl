@@ -534,20 +534,26 @@ class KvmCtl(object):
                u'-pidfile', vm.get_pidfile(),
                u'-runas', self.runas_user,
                u'-daemonize']
+        # logfile
         vm_logfile = vm.get_logfile()
         if vm_logfile is not None:
             cmd_logfile = (u'-D', vm_logfile)
             cmd.extend(cmd_logfile)
+
+        # ISO / Cdrom
         if vm.iso:
             cmd_iso = (u'-cdrom', vm.iso)
             cmd.extend(cmd_iso)
+
+        # VNC
         if vnc:
             cmd_vnc = (u'-usbdevice', u'tablet', u'-vnc', u':%s' % vm.vmid, u'-k', vm.language)
             cmd.extend(cmd_vnc)
         else:
             cmd_novnc = (u'-vga', u'none', u'-nographic')
             cmd.extend(cmd_novnc)
-        # network
+
+        # Network
         if not vm.mac_external and not vm.mac_internal:
             raise ValueError(u'At least one network interface(internal or external) must be supplied')
         if vm.mac_external:
@@ -561,6 +567,7 @@ class KvmCtl(object):
                 u'-net', u'tap,ifname=%s,script=%s' % (vm.get_internal_tap_device(), self.ifup_script_internal))
             cmd.extend(cmd_net_internal)
 
+        # start it
         returncode, stdout, stderr = _run_command(cmd)
         if returncode != 0:
             raise Exception(u'VM start failed:\n%s' % stderr)
