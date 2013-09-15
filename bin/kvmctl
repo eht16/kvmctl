@@ -523,7 +523,6 @@ class KvmCtl(object):
                u'-drive', u'file=%s,if=virtio,aio=threads,cache=writeback,boot=on' % vm.get_image_filename(),
                u'-monitor', u'telnet:127.0.0.1:%s,server,nowait' % vm.get_monitor_telnet_port(),
                #u'-serial', u'unix:%s,server,nowait' % vm.get_serial_console_file(),
-               u'-writeconfig', u'/etc/kvm/%s.conf' % vm.name,
                u'-pidfile', vm.get_pidfile(),
                u'-runas', self.runas_user,
                u'-D', vm.get_logfile(),
