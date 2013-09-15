@@ -149,6 +149,7 @@ class Container(object):
 class VirtualMachine(object):
     """"""
 
+    kvm_executable = None
     pidfile_path = None
     logfile_path = None
     images_path = None
@@ -220,7 +221,7 @@ class VirtualMachine(object):
             return False
 
         # the cmdline of the process should contain the same pidfile path as we have just checked
-        if not 'kvm' in cmdline or not pidfile in cmdline:
+        if not self.kvm_executable in cmdline or not pidfile in cmdline:
             return False
 
         return True
@@ -310,6 +311,7 @@ class KvmCtl(object):
     config_path = None
     vzlist_command = None
     stop_wait_timeout = None
+    kvm_executable = None
     runas_user = None
     ifup_script_external = None
     ifup_script_internal = None
@@ -510,7 +512,7 @@ class KvmCtl(object):
 
     #----------------------------------------------------------------------
     def _start(self, vm, vnc=False):
-        cmd = [u'kvm',
+        cmd = [self.kvm_executable,
                u'-name', u'%(name)s,process=%(name)s' % dict(name=vm.name),
                u'-localtime',
                u'-m', vm.memory,
@@ -786,9 +788,11 @@ def _parse_config():
     KvmCtl.vzlist_command = config.get('openvz', 'vzlist_command')
     KvmCtl.stop_wait_timeout = config.getfloat('kvmctl', 'stop_wait_timeout')
     KvmCtl.runas_user = config.get('kvmctl', 'runas_user')
+    KvmCtl.kvm_executable = config.get('kvmctl', 'kvm_executable')
     KvmCtl.ifup_script_external = config.get('kvmctl', 'ifup_script_external')
     KvmCtl.ifup_script_internal = config.get('kvmctl', 'ifup_script_internal')
 
+    VirtualMachine.kvm_executable = config.get('kvmctl', 'kvm_executable')
     VirtualMachine.pidfile_path = config.get('kvmctl', 'pidfile_path')
     VirtualMachine.logfile_path = config.get('kvmctl', 'logfile_path')
     VirtualMachine.images_path = config.get('kvmctl', 'images_path')
