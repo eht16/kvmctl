@@ -124,6 +124,7 @@ class Container(object):
 
     #----------------------------------------------------------------------
     def get_max_memory(self):
+        # this is what OpenVZ reports for unlimited values
         if self.memory != '9223372036854775807':
             return _format_bytes((float(self.memory) * 4) / 1024)
         else:
