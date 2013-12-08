@@ -571,7 +571,7 @@ class KvmCtl(object):
         # start it
         returncode, stdout, stderr = _run_command(cmd)
         if returncode != 0:
-            raise Exception(u'VM start failed:\n%s' % stderr)
+            raise Exception(u'VM start failed:\nStdout: %s\nStderr: %s' % (stdout, stderr))
         else:
             print stdout,
 
