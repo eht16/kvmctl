@@ -169,6 +169,7 @@ class VirtualMachine(object):
         self.mac_external = None
         self.language = None
         self.auto_start = None
+        self.graphics = None
         self._pid = None
         self._pidfile = None
         self._logfile = None
@@ -391,6 +392,7 @@ class KvmCtl(object):
         vm_instance.mac_external = _get_value_from_config_file(vm_config.get, u'instance', u'mac_external')
         vm_instance.language = _get_value_from_config_file(vm_config.get, u'instance', u'language')
         vm_instance.auto_start = _get_value_from_config_file(vm_config.getboolean, u'instance', u'auto_start')
+        vm_instance.graphics = _get_value_from_config_file(vm_config.getboolean, u'instance', u'graphics')
 
         return vm_instance
 
@@ -548,11 +550,17 @@ class KvmCtl(object):
 
         # VNC
         if vnc:
-            cmd_vnc = (u'-usbdevice', u'tablet', u'-vnc', u':%s' % vm.vmid, u'-k', vm.language)
+            cmd_vnc = (u'-usbdevice', u'tablet',
+                       u'-vnc', u':%s' % vm.vmid,
+                       u'-k', vm.language)
             cmd.extend(cmd_vnc)
         else:
-            cmd_novnc = (u'-vga', u'none', u'-nographic')
+            cmd_novnc = (u'-vnc', u'none')
             cmd.extend(cmd_novnc)
+
+        if not vm.graphics:
+            cmd_nographics = (u'-vga', u'none', u'-nographic')
+            cmd.extend(cmd_nographics)
 
         # Network
         if not vm.mac_external and not vm.mac_internal:
