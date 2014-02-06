@@ -106,8 +106,8 @@ class ProcessViewer(object):
     """
 
     #----------------------------------------------------------------------
-    def __init__(self, short_output, ctid):
-        self._short_output = short_output
+    def __init__(self, brief_output, ctid):
+        self._brief_output = brief_output
         self._ctid = ctid
         self._processes = list()
         self._environment_process_groups = dict()
@@ -186,7 +186,7 @@ class ProcessViewer(object):
         sorted_env_groups = self._sort_sequence_by_item(env_groups, 'env_id')
         for env_group in sorted_env_groups:
             print unicode(env_group)
-            if self._short_output:
+            if self._brief_output:
                 continue
             process_groups = env_group.process_groups.values()
             sorted_process_groups = self._sort_sequence_by_item(process_groups, 'name')
@@ -205,8 +205,8 @@ def _setup_options():
             help=u'enable tracebacks (default: %default)', default=False)
     option_parser.add_option('-E', dest='ctid',
             help=u'limit output to the specified container', default=None)
-    option_parser.add_option('-s', dest='short_output', action='store_true',
-            help=u'short output (list only containers with their process count)', default=False)
+    option_parser.add_option('-b', '--brief', dest='brief_output', action='store_true',
+            help=u'brief output (list only containers with their process count)', default=False)
 
     return option_parser
 
@@ -217,7 +217,7 @@ def main():
     options, _ = option_parser.parse_args()
 
     try:
-        process_viewer = ProcessViewer(options.short_output, options.ctid)
+        process_viewer = ProcessViewer(options.brief_output, options.ctid)
         process_viewer.view()
     except Exception, e:
         if options.debug:
