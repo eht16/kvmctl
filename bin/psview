@@ -106,8 +106,9 @@ class ProcessViewer(object):
     """
 
     #----------------------------------------------------------------------
-    def __init__(self, brief_output, ctid):
+    def __init__(self, brief_output, sort_count, ctid):
         self._brief_output = brief_output
+        self._sort_count = sort_count
         self._ctid = ctid
         self._processes = list()
         self._environment_process_groups = dict()
@@ -182,14 +183,21 @@ class ProcessViewer(object):
 
     #----------------------------------------------------------------------
     def _render_process_overview(self):
+        if self._sort_count:
+            env_group_sort_key = 'count'
+            process_group_sort_key = 'count'
+        else:
+            env_group_sort_key = 'env_id'
+            process_group_sort_key = 'name'
+
         env_groups = self._environment_process_groups.values()
-        sorted_env_groups = self._sort_sequence_by_item(env_groups, 'env_id')
+        sorted_env_groups = self._sort_sequence_by_item(env_groups, env_group_sort_key)
         for env_group in sorted_env_groups:
             print unicode(env_group)
             if self._brief_output:
                 continue
             process_groups = env_group.process_groups.values()
-            sorted_process_groups = self._sort_sequence_by_item(process_groups, 'name')
+            sorted_process_groups = self._sort_sequence_by_item(process_groups, process_group_sort_key)
             for process_group in sorted_process_groups:
                 print ur' \_ %s: %s' % (process_group.name, process_group.count)
 
@@ -207,6 +215,8 @@ def _setup_options():
             help=u'limit output to the specified container', default=None)
     option_parser.add_option('-b', '--brief', dest='brief_output', action='store_true',
             help=u'brief output (list only containers with their process count)', default=False)
+    option_parser.add_option('-s', '--sort-count', dest='sort_count', action='store_true',
+            help=u'sort containers and process groups by their count instead of name', default=False)
 
     return option_parser
 
@@ -217,7 +227,7 @@ def main():
     options, _ = option_parser.parse_args()
 
     try:
-        process_viewer = ProcessViewer(options.brief_output, options.ctid)
+        process_viewer = ProcessViewer(options.brief_output, options.sort_count, options.ctid)
         process_viewer.view()
     except Exception, e:
         if options.debug:
