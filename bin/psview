@@ -55,6 +55,7 @@ class ProcessGroup(object):
         self._count = None
 
     #----------------------------------------------------------------------
+    @property
     def count(self):
         if self._count is None:
             self._count = len(self.processes)
@@ -78,9 +79,10 @@ class EnvironmentProcessGroup(object):
         return self.env_id
 
     #----------------------------------------------------------------------
+    @property
     def count(self):
         # return the sum of all processes in all groups
-        group_counts = [process_group.count() for process_group in self.process_groups.values()]
+        group_counts = [process_group.count for process_group in self.process_groups.values()]
         return sum(group_counts)
 
     #----------------------------------------------------------------------
@@ -93,7 +95,7 @@ class EnvironmentProcessGroup(object):
             env_name = u'Host'
         else:
             env_name = u'Container %s' % self.env_id
-        return u'%s (%s processes)' % (env_name, self.count())
+        return u'%s (%s processes)' % (env_name, self.count)
 
 
 ########################################################################
@@ -189,7 +191,7 @@ class ProcessViewer(object):
             process_groups = env_group.process_groups.values()
             sorted_process_groups = self._sort_sequence_by_item(process_groups, 'name')
             for process_group in sorted_process_groups:
-                print ur' \_ %s: %s' % (process_group.name, process_group.count())
+                print ur' \_ %s: %s' % (process_group.name, process_group.count)
 
     #----------------------------------------------------------------------
     def _sort_sequence_by_item(self, seq, attr_name):
