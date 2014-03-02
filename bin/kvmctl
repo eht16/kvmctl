@@ -585,6 +585,7 @@ class KvmCtl(object):
             cmd.extend(parsed_args)
 
         # start it
+        self._logger.info(u'Using command line: %s', cmd)
         returncode, stdout, stderr = _run_command(cmd)
         if returncode != 0:
             raise Exception(u'VM start failed:\nStdout: %s\nStderr: %s' % (stdout, stderr))
