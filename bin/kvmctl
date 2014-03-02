@@ -30,8 +30,9 @@ from time import gmtime, sleep, strftime, time
 import functools
 import logging
 import os
-import sys
 import re
+import shlex
+import sys
 import telnetlib
 
 
@@ -170,6 +171,7 @@ class VirtualMachine(object):
         self.language = None
         self.auto_start = None
         self.graphics = None
+        self.args = None
         self._pid = None
         self._pidfile = None
         self._logfile = None
@@ -393,6 +395,7 @@ class KvmCtl(object):
         vm_instance.language = _get_value_from_config_file(vm_config.get, u'instance', u'language')
         vm_instance.auto_start = _get_value_from_config_file(vm_config.getboolean, u'instance', u'auto_start')
         vm_instance.graphics = _get_value_from_config_file(vm_config.getboolean, u'instance', u'graphics')
+        vm_instance.args = _get_value_from_config_file(vm_config.get, u'instance', u'args')
 
         return vm_instance
 
@@ -575,6 +578,11 @@ class KvmCtl(object):
                 u'-net', u'nic,model=virtio,macaddr=%s' % vm.mac_internal,
                 u'-net', u'tap,ifname=%s,script=%s' % (vm.get_internal_tap_device(), self.ifup_script_internal))
             cmd.extend(cmd_net_internal)
+
+        # custom arguments
+        if vm.args:
+            parsed_args = shlex.split(vm.args)
+            cmd.extend(parsed_args)
 
         # start it
         returncode, stdout, stderr = _run_command(cmd)
